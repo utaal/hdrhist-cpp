@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <optional>
+#include <limits>
 
 /// `hdrhist` is a small footprint [hdr histogram](https://hdrhistogram.github.io/HdrHistogram/).
 ///
@@ -21,7 +22,7 @@ class HDRHistCcdf;
 /// An hdr histogram that collects `u64` samples with 5 bit precision.
 class HDRHist {
 protected:
-    unsigned long counts [BUCKETS][LOW_BITS];
+    unsigned long counts [BUCKETS][LOW_BITS] = {};
 
     friend class HDRHistCcdf;
 
@@ -33,7 +34,7 @@ public:
     ///
     /// This is guaranteed to be constant time and never re-allocates.
     void add_value(unsigned long value) {
-        unsigned int msb = 64 - __builtin_ctz(value);
+        unsigned int msb = std::numeric_limits<unsigned long>::digits - __builtin_clzl(value);
         std::size_t bucket = (msb > HDHISTOGRAM_BITS) ? msb - HDHISTOGRAM_BITS : 0;
         std::size_t low_bits = value >> ((bucket > 0) ? bucket - 1 : 0) & ((1 << HDHISTOGRAM_BITS) - 1);
         this->counts[bucket][low_bits] += 1;
@@ -65,15 +66,15 @@ protected:
     std::size_t low_bits; 
     std::size_t last_bucket;
     std::size_t last_low_bits; 
-    unsigned long total;
-    unsigned long cumulative;
+    unsigned long total = 0;
+    unsigned long cumulative = 0;
 
 public:
     HDRHistCcdf(const HDRHist* hist_) : hist(hist_) {
         bool init = true;
         for (std::size_t b = 0; b < BUCKETS; ++b) {
             for (std::size_t l = 0; l < LOW_BITS; ++l) {
-                if (hist->counts[bucket][low_bits] > 0) {
+                if (hist->counts[b][l] > 0) {
                     if (init) {
                         init = false;
                         this->bucket = b;
@@ -82,25 +83,36 @@ public:
                     this->last_bucket = b;
                     this->last_low_bits = l;
                 }
-                this->total += hist->counts[bucket][low_bits];
+                this->total += hist->counts[b][l];
             }
+        }
+        this->last_low_bits += 2;
+        if (this->last_low_bits >= LOW_BITS) {
+            this->last_bucket += 1;
+            this->last_low_bits %= LOW_BITS;
         }
     }
 
     std::optional<CcdfElement> next() {
-        if (this->bucket == this->last_bucket && this->low_bits == this->low_bits) {
+        if (this->bucket == BUCKETS || (
+            this->bucket == this->last_bucket && this->low_bits == this->last_low_bits)) {
             return std::nullopt;
         }
         unsigned long value;
         if (bucket > 0) {
-            value = (1 << ((unsigned long) this->bucket + HDHISTOGRAM_BITS - 1))
-                    + ((unsigned long) this->low_bits << (this->bucket- 1));
+            value = (1 << (((unsigned long) this->bucket) + HDHISTOGRAM_BITS - 1))
+                    + (((unsigned long) this->low_bits) << (this->bucket- 1));
         } else {
             value = (unsigned long) this->low_bits;
         }
-        double fraction = (double) (this->total - this->cumulative) / ((double) total);
+        double fraction = ((double) (this->total - this->cumulative)) / ((double) total);
         unsigned long count = hist->counts[this->bucket][this->low_bits];
         this->cumulative += count;
+        this->low_bits += 1;
+        if (low_bits == LOW_BITS) {
+            this->low_bits = 0;
+            this->bucket += 1;
+        }
         return CcdfElement {
             value,
             fraction,
