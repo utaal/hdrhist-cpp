@@ -14,4 +14,14 @@ int main() {
 
         std::cerr << ccdf_el->value << " " << ccdf_el->fraction << std::endl;
     }
+
+    auto quantiles_f = std::vector { .25f, .5f, .75f };
+    auto quantiles = hist.quantiles(quantiles_f);
+    for (
+        auto quantile_el = quantiles.next();
+        quantile_el.has_value();
+        quantile_el = quantiles.next()) {
+
+        std::cerr << quantile_el->quantile << " " << quantile_el->lower_bound << " " << quantile_el->upper_bound << std::endl;
+    }
 }

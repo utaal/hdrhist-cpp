@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <optional>
 #include <limits>
+#include <vector>
 
 /// `hdrhist` is a small footprint [hdr histogram](https://hdrhistogram.github.io/HdrHistogram/).
 ///
@@ -17,7 +18,14 @@ struct CcdfElement {
     unsigned long count;
 };
 
+struct Quantile {
+    float quantile;
+    unsigned long lower_bound;
+    unsigned long upper_bound;
+};
+
 class HDRHistCcdf;
+class HDRHistQuantiles;
 
 /// An hdr histogram that collects `u64` samples with 5 bit precision.
 class HDRHist {
@@ -25,6 +33,7 @@ protected:
     unsigned long counts [BUCKETS][LOW_BITS] = {};
 
     friend class HDRHistCcdf;
+    friend class HDRHistQuantiles;
 
 public:
     /// Construct an empty hdr histogram.
@@ -57,6 +66,11 @@ public:
     /// `(value, prob, count)`, `prob` is the ratio of samples >= `value`, and
     /// `count` is the number of samples >= the current `value` and < the next `value`.
     HDRHistCcdf ccdf();
+
+    /// Output estimated quantiles as (quantile, lower_bound, upper_bound) structs
+    ///
+    /// Each quantile's value is somewhere >= lower_bound and < upper_bound
+    HDRHistQuantiles quantiles(std::vector<float> quantiles);
 };
 
 class HDRHistCcdf {
@@ -122,8 +136,54 @@ public:
 
 };
 
+class HDRHistQuantiles {
+protected:
+    HDRHistCcdf ccdf;
+    const std::vector<float> quantiles;
+    std::size_t current_quantile = 0;
+    std::optional<CcdfElement> ccdf_el;
+    unsigned long prev_v = 0;
+    double cur_f = 1.0;
+    unsigned long cur_v = 0;
+
+public:
+    HDRHistQuantiles(HDRHistCcdf ccdf_, const std::vector<float> quantiles_) :
+        ccdf(ccdf_), quantiles(quantiles_) { 
+    }
+
+    std::optional<Quantile> next() {
+        if (this->current_quantile >= this->quantiles.size()) {
+            return std::nullopt;
+        }
+
+        float quantile = this->quantiles[this->current_quantile];
+        double pf = 1.0 - quantile;
+        while (this->cur_f > pf) {
+            this->ccdf_el = this->ccdf.next();
+            if (!this->ccdf_el.has_value()) {
+                break;
+            }
+            this->prev_v = this->cur_v;
+            this->cur_f = this->ccdf_el->fraction;
+            this->cur_v = this->ccdf_el->value;
+        }
+        
+        this->current_quantile++;
+
+        return Quantile {
+            quantile,
+            this->prev_v,
+            this->cur_v,
+        };
+    }
+};
+
 HDRHistCcdf HDRHist::ccdf() {
     return HDRHistCcdf(this);
+}
+
+HDRHistQuantiles HDRHist::quantiles(std::vector<float> quantiles) {
+    return HDRHistQuantiles(HDRHistCcdf(this), quantiles);
 }
 
 //    /// Outputs an upper bound of the complementary cumulative distribution function (ccdf) of the samples.
@@ -156,27 +216,6 @@ HDRHistCcdf HDRHist::ccdf() {
 //        })
 //    }
 //
-//    /// Output estimated quantiles as (quantile, lower_bound, upper_bound) pairs
-//    ///
-//    /// Each quantile's value is somewhere >= lower_bound and < upper_bound
-//    pub fn quantiles<'a>(&'a self, quantiles: impl Iterator<Item=f64>+'a) -> impl Iterator<Item=(f64, u64, u64)>+'a {
-//        let mut ccdf = self.ccdf();
-//        let mut prev_v = 0;
-//        let (mut cur_f, mut cur_v) = (1.0, 0);
-//        quantiles.map(move |p| {
-//            let pf = 1f64 - p;
-//            while cur_f > pf {
-//                if let Some((v, f, _)) = ccdf.next() {
-//                    prev_v = cur_v;
-//                    cur_f = f;
-//                    cur_v = v;
-//                } else {
-//                    break;
-//                }
-//            }
-//            (p, prev_v, cur_v)
-//        })
-//    }
 //
 //    /// Output a summary of estimated quantiles
 //    pub fn summary<'a>(&'a self) -> impl Iterator<Item=(f64, u64, u64)>+'a {
