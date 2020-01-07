@@ -5,7 +5,7 @@
 
 /// `hdrhist` is a small footprint [hdr histogram](https://hdrhistogram.github.io/HdrHistogram/).
 ///
-/// It collects `u64` samples in the full `u64` value range with precision of 5 most significant bits. You can add new samples in `O(1)` time (a handful of cycles), and it will never reallocate.
+/// It collects `u64` samples in the full `unsigned long` value range with precision of 5 most significant bits. You can add new samples in `O(1)` time (a handful of cycles), and it will never reallocate.
 
 const std::size_t HDHISTOGRAM_BITS = 4;
 
@@ -25,6 +25,7 @@ struct Quantile {
 };
 
 class HDRHistCcdf;
+class HDRHistCcdfBound;
 class HDRHistQuantiles;
 
 /// An hdr histogram that collects `u64` samples with 5 bit precision.
@@ -33,6 +34,7 @@ protected:
     unsigned long counts [BUCKETS][LOW_BITS] = {};
 
     friend class HDRHistCcdf;
+    friend class HDRHistCcdfBound;
     friend class HDRHistQuantiles;
 
 public:
@@ -65,12 +67,29 @@ public:
     /// Returns an iterator over increasing sample values such that, for every triple
     /// `(value, prob, count)`, `prob` is the ratio of samples >= `value`, and
     /// `count` is the number of samples >= the current `value` and < the next `value`.
-    HDRHistCcdf ccdf();
+    HDRHistCcdf ccdf() const;
 
     /// Output estimated quantiles as (quantile, lower_bound, upper_bound) structs
     ///
     /// Each quantile's value is somewhere >= lower_bound and < upper_bound
-    HDRHistQuantiles quantiles(std::vector<float> quantiles);
+    HDRHistQuantiles quantiles(std::vector<float> quantiles) const;
+
+    /// Output a summary of estimated quantiles
+    HDRHistQuantiles summary() const;
+
+    /// Outputs an upper bound of the complementary cumulative distribution function (ccdf) of the samples.
+    ///
+    /// You can use these points to plot with linear interpolation and never report intermediate
+    /// sample values that underestimate quantiles. In other words, all the actual quantile values will be below the
+    /// reported curve.
+    HDRHistCcdfBound ccdf_upper_bound() const;
+
+    /// Outputs an upper bound of the complementary cumulative distribution function (ccdf) of the samples.
+    ///
+    /// You can use these points to plot with linear interpolation and never report intermediate
+    /// sample values that overestimate quantiles. In other words, all the actual quantile values will be above the
+    /// reported curve.
+    HDRHistCcdfBound ccdf_lower_bound() const;
 };
 
 class HDRHistCcdf {
@@ -136,6 +155,42 @@ public:
 
 };
 
+class HDRHistCcdfBound {
+protected:
+    HDRHistCcdf ccdf;
+    bool upper;
+    std::optional<CcdfElement> curr;
+
+public:
+    HDRHistCcdfBound(HDRHistCcdf ccdf_, bool upper_) : ccdf(ccdf_), upper(upper_) {
+        this->curr = this->ccdf.next();
+    }
+
+    std::optional<CcdfElement> next() {
+        if (!this->curr.has_value()) {
+            return std::nullopt;
+        }
+        auto prev = this->curr.value();
+        this->curr = this->ccdf.next();
+        if (!this->curr.has_value()) {
+            return std::nullopt;
+        }
+        if (upper) {
+            return CcdfElement {
+                this->curr->value,
+                prev.fraction,
+                prev.count,
+            };
+        } else {
+            return CcdfElement {
+                prev.value,
+                this->curr->fraction,
+                this->curr->count,
+            };
+        }
+    }
+};
+
 class HDRHistQuantiles {
 protected:
     HDRHistCcdf ccdf;
@@ -178,51 +233,27 @@ public:
     }
 };
 
-HDRHistCcdf HDRHist::ccdf() {
+HDRHistCcdf HDRHist::ccdf() const {
     return HDRHistCcdf(this);
 }
 
-HDRHistQuantiles HDRHist::quantiles(std::vector<float> quantiles) {
+HDRHistQuantiles HDRHist::quantiles(std::vector<float> quantiles) const {
     return HDRHistQuantiles(HDRHistCcdf(this), quantiles);
 }
 
-//    /// Outputs an upper bound of the complementary cumulative distribution function (ccdf) of the samples.
-//    ///
-//    /// You can use these points to plot with linear interpolation and never report intermediate
-//    /// sample values that underestimate quantiles. In other words, all the actual quantile values will be below the
-//    /// reported curve.
-//    pub fn ccdf_upper_bound<'a>(&'a self) -> impl Iterator<Item=(u64, f64)>+'a {
-//        let mut ccdf = self.ccdf();
-//        let mut cur_f = ccdf.next().map(|(_, f, _)| f);
-//        ccdf.map(move |(v, f, _)| {
-//            let prev_f = cur_f.unwrap();
-//            cur_f = Some(f);
-//            (v, prev_f)
-//        })
-//    }
-//
-//    /// Outputs an upper bound of the complementary cumulative distribution function (ccdf) of the samples.
-//    ///
-//    /// You can use these points to plot with linear interpolation and never report intermediate
-//    /// sample values that overestimate quantiles. In other words, all the actual quantile values will be above the
-//    /// reported curve.
-//    pub fn ccdf_lower_bound<'a>(&'a self) -> impl Iterator<Item=(u64, f64)>+'a {
-//        let mut ccdf = self.ccdf();
-//        let mut cur_v = ccdf.next().map(|(v, _, _)| v);
-//        ccdf.map(move |(v, f, _)| {
-//            let prev_v = cur_v.unwrap();
-//            cur_v = Some(v);
-//            (prev_v, f)
-//        })
-//    }
-//
-//
-//    /// Output a summary of estimated quantiles
-//    pub fn summary<'a>(&'a self) -> impl Iterator<Item=(f64, u64, u64)>+'a {
-//        let summary_quantiles = [0.25, 0.50, 0.75, 0.95, 0.99, 0.999, 1.0].iter().map(|x| *x);
-//        self.quantiles(summary_quantiles)
-//    }
-//
+HDRHistQuantiles HDRHist::summary() const {
+    std::vector<float> summary_quantiles = std::vector { 0.25f, 0.50f, 0.75f, 0.95f, 0.99f, 0.999f, 1.0f };
+    return this->quantiles(summary_quantiles);
+}
+
+HDRHistCcdfBound HDRHist::ccdf_upper_bound() const {
+    return HDRHistCcdfBound(HDRHistCcdf(this), true);
+}
+
+HDRHistCcdfBound HDRHist::ccdf_lower_bound() const {
+    return HDRHistCcdfBound(HDRHistCcdf(this), false);
+}
+
 //    /// Output a text summary of estimated quantiles
 //    pub fn summary_string(&self) -> String {
 //        let mut values_lower: Vec<String> = vec!["╭ ".to_string()];
