@@ -136,6 +136,10 @@ public:
         }
     }
 
+    unsigned long samples() {
+        return this->total;
+    }
+
     std::optional<CcdfElement> next() {
         if (this->bucket == BUCKETS || this->low_bits == LOW_BITS || (
             this->bucket == this->last_bucket && this->low_bits == this->last_low_bits)) {
@@ -214,6 +218,10 @@ protected:
 public:
     HDRHistQuantiles(HDRHistCcdf ccdf_, const std::vector<float> quantiles_) :
         ccdf(ccdf_), quantiles(quantiles_) { 
+    }
+
+    unsigned long samples() {
+        return this->ccdf.samples();
     }
 
     std::optional<Quantile> next() {
