@@ -45,10 +45,14 @@ public:
     ///
     /// This is guaranteed to be constant time and never re-allocates.
     void add_value(unsigned long value) {
-        unsigned int msb = std::numeric_limits<unsigned long>::digits - __builtin_clzl(value);
-        std::size_t bucket = (msb > HDHISTOGRAM_BITS) ? msb - HDHISTOGRAM_BITS : 0;
-        std::size_t low_bits = value >> ((bucket > 0) ? bucket - 1 : 0) & ((1 << HDHISTOGRAM_BITS) - 1);
-        this->counts[bucket][low_bits] += 1;
+        if (value == 0) {
+            this->counts[0][0] += 1;
+        } else {
+            unsigned int msb = std::numeric_limits<unsigned long>::digits - __builtin_clzl(value);
+            std::size_t bucket = (msb > HDHISTOGRAM_BITS) ? msb - HDHISTOGRAM_BITS : 0;
+            std::size_t low_bits = value >> ((bucket > 0) ? bucket - 1 : 0) & ((1 << HDHISTOGRAM_BITS) - 1);
+            this->counts[bucket][low_bits] += 1;
+        }
     }
 
 
@@ -119,15 +123,21 @@ public:
                 this->total += hist->counts[b][l];
             }
         }
-        this->last_low_bits += 2;
-        if (this->last_low_bits >= LOW_BITS) {
-            this->last_bucket += 1;
-            this->last_low_bits %= LOW_BITS;
+        if (!init) {
+            this->last_low_bits += 2;
+            if (this->last_low_bits >= LOW_BITS) {
+                this->last_bucket += 1;
+                this->last_low_bits %= LOW_BITS;
+            }
+        } else {
+            // hist is empty
+            this->bucket = BUCKETS;
+            this->low_bits = LOW_BITS;
         }
     }
 
     std::optional<CcdfElement> next() {
-        if (this->bucket == BUCKETS || (
+        if (this->bucket == BUCKETS || this->low_bits == LOW_BITS || (
             this->bucket == this->last_bucket && this->low_bits == this->last_low_bits)) {
             return std::nullopt;
         }
