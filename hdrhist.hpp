@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstddef>
 #include <optional>
 #include <limits>
@@ -251,24 +253,24 @@ public:
     }
 };
 
-HDRHistCcdf HDRHist::ccdf() const {
+inline HDRHistCcdf HDRHist::ccdf() const {
     return HDRHistCcdf(this);
 }
 
-HDRHistQuantiles HDRHist::quantiles(std::vector<float> quantiles) const {
+inline HDRHistQuantiles HDRHist::quantiles(std::vector<float> quantiles) const {
     return HDRHistQuantiles(HDRHistCcdf(this), quantiles);
 }
 
-HDRHistQuantiles HDRHist::summary() const {
+inline HDRHistQuantiles HDRHist::summary() const {
     std::vector<float> summary_quantiles = std::vector { 0.25f, 0.50f, 0.75f, 0.95f, 0.99f, 0.999f, 1.0f };
     return this->quantiles(summary_quantiles);
 }
 
-HDRHistCcdfBound HDRHist::ccdf_upper_bound() const {
+inline HDRHistCcdfBound HDRHist::ccdf_upper_bound() const {
     return HDRHistCcdfBound(HDRHistCcdf(this), true);
 }
 
-HDRHistCcdfBound HDRHist::ccdf_lower_bound() const {
+inline HDRHistCcdfBound HDRHist::ccdf_lower_bound() const {
     return HDRHistCcdfBound(HDRHistCcdf(this), false);
 }
 
